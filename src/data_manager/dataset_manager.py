@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 import shutil
 from datetime import datetime
 
@@ -123,6 +123,9 @@ class DatasetManager:
 
             # 扰动可视化
             perturbation = (adv_images[i] - images[i]).abs()
+            max_val = float(perturbation.max().item())
+            if max_val > 1e-12:
+                perturbation = torch.clamp(perturbation / max_val, 0.0, 1.0)
             pert_path = os.path.join(save_dir, f"perturbation_{i}.png")
             self._save_image(perturbation, pert_path)
 
@@ -139,6 +142,67 @@ class DatasetManager:
         metadata_path = os.path.join(save_dir, 'metadata.json')
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata_full, f, indent=2, ensure_ascii=False)
+
+        return save_dir
+
+    def _to_serializable(self, value: Any) -> Any:
+        """Convert nested values to JSON-serializable types."""
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 1:
+                return float(value.item())
+            return value.detach().cpu().tolist()
+        if isinstance(value, np.ndarray):
+            if value.size == 1:
+                return float(value.item())
+            return value.tolist()
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, dict):
+            return {str(k): self._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._to_serializable(v) for v in value]
+        return value
+
+    def save_experiment_record(self,
+                               experiment_name: str,
+                               metadata: Dict,
+                               original_image: Optional[torch.Tensor] = None,
+                               adversarial_image: Optional[torch.Tensor] = None) -> str:
+        """
+        Save a generic experiment record (supports text/multimodal).
+
+        If original/adversarial images are provided, also store
+        original_0/adversarial_0/perturbation_0 for history preview.
+        """
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        save_dir = os.path.join(self.adversarial_dir, f"{experiment_name}_{timestamp}")
+        os.makedirs(save_dir, exist_ok=True)
+
+        if original_image is not None and adversarial_image is not None:
+            original_image = original_image.detach().cpu()
+            adversarial_image = adversarial_image.detach().cpu()
+            self._save_image(original_image, os.path.join(save_dir, 'original_0.png'))
+            self._save_image(adversarial_image, os.path.join(save_dir, 'adversarial_0.png'))
+
+            perturbation = (adversarial_image - original_image).abs()
+            max_val = float(perturbation.max().item())
+            if max_val > 1e-12:
+                perturbation = torch.clamp(perturbation / max_val, 0.0, 1.0)
+            self._save_image(perturbation, os.path.join(save_dir, 'perturbation_0.png'))
+
+        payload = {
+            'attack_name': experiment_name,
+            'timestamp': timestamp,
+            **self._to_serializable(metadata)
+        }
+        if 'num_samples' not in payload:
+            payload['num_samples'] = 1
+
+        metadata_path = os.path.join(save_dir, 'metadata.json')
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
 
         return save_dir
 

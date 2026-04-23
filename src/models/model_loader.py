@@ -6,7 +6,7 @@ import os
 import torch
 import torch.nn as nn
 import torchvision.models as models
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 
 try:
     from transformers import AutoModel, AutoTokenizer, CLIPProcessor, CLIPModel
@@ -19,10 +19,12 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 MODEL_CACHE_ROOT = os.path.join(PROJECT_ROOT, 'data', 'model_cache')
 TORCH_CACHE_DIR = os.path.join(MODEL_CACHE_ROOT, 'torch')
 HF_CACHE_DIR = os.path.join(MODEL_CACHE_ROOT, 'huggingface')
+CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, 'data', 'checkpoints')
 LOCAL_CLIP_B32_DIR = os.path.join(HF_CACHE_DIR, 'clip-vit-base-patch32', '0_CLIPModel')
 
 os.makedirs(TORCH_CACHE_DIR, exist_ok=True)
 os.makedirs(HF_CACHE_DIR, exist_ok=True)
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 os.environ.setdefault('TORCH_HOME', TORCH_CACHE_DIR)
 os.environ.setdefault('HF_HOME', HF_CACHE_DIR)
@@ -76,6 +78,72 @@ class ModelLoader:
         'blip-base': 'Salesforce/blip-image-captioning-base',
         'git-base': 'microsoft/git-base',
     }
+    DATASET_FINETUNE_CHECKPOINTS = {
+        ('resnet18', 'cifar-10'): 'resnet18_cifar10.pth',
+        ('resnet50', 'cifar-10'): 'resnet50_cifar10.pth',
+        ('resnet18', 'mnist'): 'resnet18_mnist.pth',
+        ('resnet50', 'mnist'): 'resnet50_mnist.pth',
+    }
+
+    @staticmethod
+    def _normalize_dataset_name(dataset_name: Optional[str]) -> Optional[str]:
+        if not dataset_name:
+            return None
+        ds = dataset_name.strip().lower()
+        mapping = {
+            'cifar10': 'cifar-10',
+            'cifar-10': 'cifar-10',
+            'mnist': 'mnist',
+            'imagenet': 'imagenet',
+            'image-net': 'imagenet',
+        }
+        return mapping.get(ds, ds)
+
+    @staticmethod
+    def get_finetune_checkpoint_path(model_name: str, dataset_name: Optional[str]) -> Optional[str]:
+        ds = ModelLoader._normalize_dataset_name(dataset_name)
+        if ds is None:
+            return None
+        filename = ModelLoader.DATASET_FINETUNE_CHECKPOINTS.get((model_name, ds))
+        if not filename:
+            return None
+        return os.path.join(CHECKPOINT_DIR, filename)
+
+    @staticmethod
+    def _extract_state_dict(checkpoint_obj):
+        if not isinstance(checkpoint_obj, dict):
+            return None
+        for key in ('state_dict', 'model_state_dict', 'net', 'model'):
+            value = checkpoint_obj.get(key)
+            if isinstance(value, dict):
+                return value
+        if all(isinstance(v, torch.Tensor) for v in checkpoint_obj.values()):
+            return checkpoint_obj
+        return None
+
+    @staticmethod
+    def maybe_load_finetune_checkpoint(model: nn.Module,
+                                       model_name: str,
+                                       dataset_name: Optional[str],
+                                       device: str) -> Tuple[bool, Optional[str], str]:
+        checkpoint_path = ModelLoader.get_finetune_checkpoint_path(model_name, dataset_name)
+        if not checkpoint_path:
+            return False, None, "no_checkpoint_mapping"
+        if not os.path.exists(checkpoint_path):
+            return False, checkpoint_path, "checkpoint_not_found"
+
+        checkpoint_obj = torch.load(checkpoint_path, map_location=device)
+        state_dict = ModelLoader._extract_state_dict(checkpoint_obj)
+        if state_dict is None:
+            return False, checkpoint_path, "invalid_checkpoint_format"
+
+        cleaned = {}
+        for key, value in state_dict.items():
+            new_key = key[7:] if key.startswith('module.') else key
+            cleaned[new_key] = value
+
+        model.load_state_dict(cleaned, strict=False)
+        return True, checkpoint_path, "loaded"
 
     @staticmethod
     def get_clip_source(model_name: str) -> str:
@@ -86,7 +154,8 @@ class ModelLoader:
 
     @staticmethod
     def load_model(model_name: str, pretrained: bool = True,
-                   num_classes: int = 1000, device: str = 'cuda') -> nn.Module:
+                   num_classes: int = 1000, device: str = 'cuda',
+                   dataset_name: Optional[str] = None) -> nn.Module:
         """
         加载预训练模型
 
@@ -102,7 +171,18 @@ class ModelLoader:
         device = device if torch.cuda.is_available() else 'cpu'
 
         if model_name in ModelLoader.TORCHVISION_MODELS:
-            return ModelLoader._load_torchvision_model(model_name, pretrained, num_classes, device)
+            model = ModelLoader._load_torchvision_model(model_name, pretrained, num_classes, device)
+            loaded, checkpoint_path, load_status = ModelLoader.maybe_load_finetune_checkpoint(
+                model=model,
+                model_name=model_name,
+                dataset_name=dataset_name,
+                device=device,
+            )
+            model.fine_tuned_checkpoint_loaded = loaded
+            model.fine_tuned_checkpoint_path = checkpoint_path
+            model.fine_tuned_checkpoint_status = load_status
+            model.selected_dataset_name = dataset_name
+            return model
         elif model_name in ModelLoader.CLIP_MODELS:
             return ModelLoader._load_clip_model(model_name, pretrained, device)
         elif model_name in ModelLoader.CAPTION_MODELS:

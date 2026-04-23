@@ -4,9 +4,11 @@
 import os
 import sys
 from typing import List
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from PIL import Image
 import streamlit as st
 import torch
@@ -57,8 +59,14 @@ def to_perturbation_vis(perturbation: np.ndarray) -> np.ndarray:
 
 
 @st.cache_resource(show_spinner=False)
-def get_cached_vision_model(model_name: str, device: str, num_classes: int = 1000):
-    return load_model(model_name, pretrained=True, device=device, num_classes=num_classes)
+def get_cached_vision_model(model_name: str, device: str, num_classes: int = 1000, dataset_name: str = "ImageNet"):
+    return load_model(
+        model_name,
+        pretrained=True,
+        device=device,
+        num_classes=num_classes,
+        dataset_name=dataset_name,
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -145,8 +153,8 @@ elif attack_method == "Text-PGD":
 else:
     mm_mode = st.sidebar.selectbox("多模态攻击模式", ["image", "text", "joint"], index=2)
     attack_params = {
-        "image_epsilon": st.sidebar.slider("图像epsilon", 0.0, 0.1, 8.0 / 255.0, 0.001),
-        "image_alpha": st.sidebar.slider("图像步长", 0.0005, 0.02, 1.0 / 255.0, 0.0005),
+        "image_epsilon": st.sidebar.slider("图像epsilon", 0.0, 0.1, 0.031, 0.001),
+        "image_alpha": st.sidebar.slider("图像步长", 0.0005, 0.02, 0.004, 0.0005),
         "text_epsilon": st.sidebar.slider("文本特征epsilon", 0.0, 1.0, 0.20, 0.01),
         "text_alpha": st.sidebar.slider("文本特征步长", 0.001, 0.1, 0.02, 0.001),
         "num_steps": st.sidebar.slider("迭代次数", 5, 80, 20, 5),
@@ -216,8 +224,25 @@ with tab1:
                             adversarial_text_feature=adv_text_feat,
                             targeted=targeted,
                         )
+                    dm = DatasetManager()
+                    mm_save_dir = dm.save_experiment_record(
+                        experiment_name="MM-CLIP",
+                        metadata={
+                            "model": model_name,
+                            "dataset": dataset_name,
+                            "mode": attack_params["mode"],
+                            "targeted": targeted,
+                            "source_text": source_text,
+                            "target_text": target_text if targeted else "",
+                            "metrics": mm_metrics,
+                            "info": info,
+                        },
+                        original_image=image_tensor[0],
+                        adversarial_image=adv_image[0],
+                    )
 
                     st.success("多模态攻击完成。")
+                    st.info(f"实验已保存到：{mm_save_dir}")
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         st.metric("源相似度(原图)", f"{mm_metrics['orig_source_similarity']:.4f}")
@@ -307,6 +332,24 @@ with tab1:
                     st.metric("攻击成功", "是" if orig_pred != adv_pred else "否")
                     st.write(f"L2扰动：{info['perturbation_l2']:.4f}")
                     st.write(f"Linf扰动：{info['perturbation_linf']:.4f}")
+                    dm = DatasetManager()
+                    text_save_dir = dm.save_experiment_record(
+                        experiment_name=attack_method,
+                        metadata={
+                            "model": model_name,
+                            "dataset": dataset_name,
+                            "targeted": targeted,
+                            "text_prompt": text_prompt,
+                            "class_prompts": class_prompts,
+                            "true_label": int(true_label),
+                            "target_label": int(target_label) if target_label is not None else None,
+                            "original_prediction": int(orig_pred),
+                            "adversarial_prediction": int(adv_pred),
+                            "attack_success": bool(orig_pred != adv_pred),
+                            "info": info,
+                        },
+                    )
+                    st.info(f"实验已保存到：{text_save_dir}")
 
                     fig, ax = plt.subplots(figsize=(8, 4))
                     ax.plot(sample_embedding[0].detach().cpu().numpy(), label="原始嵌入")
@@ -346,12 +389,24 @@ with tab1:
             if st.button("开始图像攻击", type="primary", use_container_width=True):
                 with st.spinner("加载模型（首次会下载，后续复用缓存）..."):
                     dataset_num_classes = {"CIFAR-10": 10, "MNIST": 10}.get(dataset_name, 1000)
-                    model = get_cached_vision_model(model_name, device, dataset_num_classes)
+                    model = get_cached_vision_model(model_name, device, dataset_num_classes, dataset_name)
                     if dataset_num_classes != 1000:
-                        st.info(
-                            f"已将分类头改为 {dataset_num_classes} 类以匹配 {dataset_name}。"
-                            " 该分类头未在该数据集微调，建议后续接入微调权重。"
-                        )
+                        if getattr(model, "fine_tuned_checkpoint_loaded", False):
+                            ckpt = str(getattr(model, "fine_tuned_checkpoint_path", ""))
+                            st.success(f"已自动加载 {dataset_name} 微调权重：{ckpt}")
+                        else:
+                            ckpt_status = str(getattr(model, "fine_tuned_checkpoint_status", ""))
+                            if ckpt_status == "checkpoint_not_found":
+                                ckpt = str(getattr(model, "fine_tuned_checkpoint_path", ""))
+                                st.warning(
+                                    f"已将分类头改为 {dataset_num_classes} 类以匹配 {dataset_name}，但未找到对应微调权重：{ckpt}。"
+                                    " 当前可用于流程演示，建议补充微调权重。"
+                                )
+                            else:
+                                st.info(
+                                    f"已将分类头改为 {dataset_num_classes} 类以匹配 {dataset_name}。"
+                                    " 该分类头未在该数据集微调，建议后续接入微调权重。"
+                                )
 
                 if attack_method == "FGSM":
                     attacker = FGSM(model, **attack_params, device=device)
@@ -359,6 +414,8 @@ with tab1:
                     attacker = PGD(model, **attack_params, device=device)
                 else:
                     attacker = CarliniWagner(model, **attack_params, device=device)
+                data_manager = DatasetManager()
+                attack_name = attack_method.replace("&", "and").replace("/", "_")
 
                 if dataset_name == "自定义图片" and uploaded_file is not None and image_tensor is not None:
                     labels = torch.tensor([int(true_label)])
@@ -383,8 +440,31 @@ with tab1:
                     st.metric("攻击成功", "是" if orig_pred != adv_pred else "否")
                     st.write(f"L2扰动：{info['perturbation_l2']:.4f}")
                     st.write(f"Linf扰动：{info['perturbation_linf']:.4f}")
+
+                    evaluator = AttackEvaluator(model, device=device)
+                    metrics = evaluator.evaluate(
+                        image_tensor.cpu(),
+                        adv_images.detach().cpu(),
+                        labels.cpu(),
+                        targeted=targeted,
+                        target_labels=target_tensor.cpu() if target_tensor is not None else None,
+                    )
+                    save_dir = data_manager.save_adversarial_samples(
+                        image_tensor.detach().cpu(),
+                        labels.cpu(),
+                        adv_images.detach().cpu(),
+                        torch.tensor([int(adv_pred)]),
+                        attack_name,
+                        metadata={
+                            "model": model_name,
+                            "dataset": dataset_name,
+                            "targeted": targeted,
+                            "target_label": int(target_label) if target_label is not None else None,
+                            "metrics": {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float, np.floating, np.integer))},
+                        },
+                    )
+                    st.info(f"实验已保存到：{save_dir}")
                 else:
-                    data_manager = DatasetManager()
                     dataloader = data_manager.load_dataset(dataset_name.lower().replace("-", ""), split="test", batch_size=32, shuffle=False)
 
                     all_original, all_adversarial, all_labels = [], [], []
@@ -397,6 +477,10 @@ with tab1:
                     for images, labels in dataloader:
                         if sample_count >= num_samples:
                             break
+                        remaining = num_samples - sample_count
+                        if remaining < len(images):
+                            images = images[:remaining]
+                            labels = labels[:remaining]
                         images = images.to(device)
                         labels = labels.to(device)
                         adv_images, _ = attacker.generate(images, labels, targeted=targeted)
@@ -428,6 +512,21 @@ with tab1:
                     evaluator = AttackEvaluator(model, device=device)
                     metrics = evaluator.evaluate(all_original, all_adversarial, all_labels)
                     st.success(f"已生成 {num_samples} 个对抗样本。")
+                    save_dir = data_manager.save_adversarial_samples(
+                        all_original,
+                        all_labels,
+                        all_adversarial,
+                        all_adv_preds,
+                        attack_name,
+                        metadata={
+                            "model": model_name,
+                            "dataset": dataset_name,
+                            "targeted": targeted,
+                            "num_samples": int(num_samples),
+                            "metrics": {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float, np.floating, np.integer))},
+                        },
+                    )
+                    st.info(f"实验已保存到：{save_dir}")
 
                     expected_num_classes = {"CIFAR-10": 10, "MNIST": 10}.get(dataset_name)
                     label_space_mismatch = expected_num_classes is not None and output_dim is not None and output_dim != expected_num_classes
@@ -535,11 +634,236 @@ with tab3:
     if not experiments:
         st.info("暂无保存实验。")
     else:
-        selected = st.selectbox("选择实验", experiments)
-        if selected:
-            exp_path = os.path.join(dm.adversarial_dir, selected)
-            metadata = dm.load_adversarial_samples(exp_path)
-            st.json(metadata)
+        def extract_metrics(meta: dict) -> dict:
+            parsed = meta.get("metrics", {})
+            if parsed:
+                return parsed
+            fallback_keys = [
+                "attack_success_rate",
+                "prediction_flip_rate",
+                "perturbation_l2",
+                "perturbation_linf",
+                "perturbation_mean",
+                "ssim",
+                "psnr",
+                "confidence_drop",
+                "original_confidence",
+                "adversarial_confidence",
+                "similarity_drop",
+                "target_similarity_gain",
+            ]
+            return {k: meta[k] for k in fallback_keys if k in meta}
+
+        records = []
+        for exp_name in experiments:
+            exp_path = os.path.join(dm.adversarial_dir, exp_name)
+            try:
+                meta = dm.load_adversarial_samples(exp_path)
+            except Exception:
+                continue
+            ts_raw = str(meta.get("timestamp", ""))
+            ts_dt = None
+            ts_pretty = ts_raw
+            try:
+                ts_dt = datetime.strptime(ts_raw, "%Y%m%d_%H%M%S")
+                ts_pretty = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+            records.append(
+                {
+                    "name": exp_name,
+                    "path": exp_path,
+                    "metadata": meta,
+                    "attack": str(meta.get("attack_name", "未知")),
+                    "model": str(meta.get("model", "-")),
+                    "dataset": str(meta.get("dataset", "-")),
+                    "ts_dt": ts_dt,
+                    "ts_raw": ts_raw,
+                    "ts_pretty": ts_pretty,
+                    "metrics": extract_metrics(meta),
+                }
+            )
+
+        if not records:
+            st.info("历史目录存在，但未找到有效的 metadata.json。")
+        else:
+            st.subheader("过滤")
+            attack_options = sorted({r["attack"] for r in records})
+            model_options = sorted({r["model"] for r in records})
+            dataset_options = sorted({r["dataset"] for r in records})
+
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                selected_attacks = st.multiselect("攻击方法", attack_options, default=attack_options)
+            with f2:
+                selected_models = st.multiselect("模型", model_options, default=model_options)
+            with f3:
+                selected_datasets = st.multiselect("数据集", dataset_options, default=dataset_options)
+
+            dated_records = [r for r in records if r["ts_dt"] is not None]
+            date_start, date_end = None, None
+            if dated_records:
+                min_date = min(r["ts_dt"].date() for r in dated_records)
+                max_date = max(r["ts_dt"].date() for r in dated_records)
+                date_range = st.date_input("日期范围", value=(min_date, max_date))
+                if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+                    date_start, date_end = date_range
+
+            filtered_records = []
+            for r in records:
+                if selected_attacks and r["attack"] not in selected_attacks:
+                    continue
+                if selected_models and r["model"] not in selected_models:
+                    continue
+                if selected_datasets and r["dataset"] not in selected_datasets:
+                    continue
+                if date_start is not None and date_end is not None and r["ts_dt"] is not None:
+                    if not (date_start <= r["ts_dt"].date() <= date_end):
+                        continue
+                filtered_records.append(r)
+
+            st.caption(f"筛选后实验数：{len(filtered_records)} / {len(records)}")
+
+            if not filtered_records:
+                st.warning("当前过滤条件下没有实验记录。")
+            else:
+                compare_mode = st.checkbox("开启实验对比模式（选择 2-3 条）", value=False)
+                filtered_names = [r["name"] for r in filtered_records]
+
+                if compare_mode:
+                    default_pick = filtered_names[: min(2, len(filtered_names))]
+                    compare_selected = st.multiselect("选择要对比的实验", filtered_names, default=default_pick)
+                    if len(compare_selected) < 2:
+                        st.info("请至少选择 2 条实验进行对比。")
+                    elif len(compare_selected) > 3:
+                        st.warning("最多选择 3 条实验进行并排对比。")
+                    else:
+                        cmp_records = [r for r in filtered_records if r["name"] in compare_selected]
+                        cmp_rows = []
+                        for r in cmp_records:
+                            m = r["metrics"]
+                            cmp_rows.append(
+                                {
+                                    "实验": r["name"],
+                                    "时间": r["ts_pretty"],
+                                    "攻击": r["attack"],
+                                    "模型": r["model"],
+                                    "数据集": r["dataset"],
+                                    "样本数": r["metadata"].get("num_samples", "-"),
+                                    "预测翻转率(%)": m.get("attack_success_rate", m.get("prediction_flip_rate")),
+                                    "L2扰动": m.get("perturbation_l2"),
+                                    "Linf扰动": m.get("perturbation_linf"),
+                                    "置信度变化": m.get("confidence_drop"),
+                                    "相似度下降": m.get("similarity_drop"),
+                                }
+                            )
+                        st.subheader("实验对比表")
+                        st.dataframe(pd.DataFrame(cmp_rows), use_container_width=True)
+
+                selected = st.selectbox("选择实验（详细查看）", filtered_names)
+                selected_record = next((r for r in filtered_records if r["name"] == selected), None)
+                if selected_record is not None:
+                    exp_path = selected_record["path"]
+                    metadata = selected_record["metadata"]
+
+                    st.subheader("实验摘要")
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.metric("攻击方法", selected_record["attack"])
+                    with c2:
+                        st.metric("样本数", str(metadata.get("num_samples", "-")))
+                    with c3:
+                        st.metric("模型", selected_record["model"])
+                    with c4:
+                        st.metric("数据集", selected_record["dataset"])
+
+                    st.caption(f"时间：{selected_record['ts_pretty']}（原始时间戳：{selected_record['ts_raw']}）")
+                    if "targeted" in metadata:
+                        st.caption(f"目标攻击：{'是' if metadata.get('targeted') else '否'}")
+                    if metadata.get("text_prompt"):
+                        st.caption(f"文本输入：{metadata.get('text_prompt')}")
+                    if metadata.get("source_text"):
+                        st.caption(f"源文本：{metadata.get('source_text')}")
+                    if metadata.get("target_text"):
+                        st.caption(f"目标文本：{metadata.get('target_text')}")
+
+                    parsed_metrics = selected_record["metrics"]
+                    if parsed_metrics:
+                        st.subheader("关键指标")
+                        metric_cols = st.columns(4)
+                        show_keys = [
+                            ("attack_success_rate", "预测翻转率", "{:.2f}%"),
+                            ("perturbation_l2", "L2扰动", "{:.4f}"),
+                            ("perturbation_linf", "Linf扰动", "{:.4f}"),
+                            ("confidence_drop", "置信度变化", "{:.4f}"),
+                        ]
+                        for idx, (key, label, fmt) in enumerate(show_keys):
+                            value = parsed_metrics.get(key)
+                            if value is None and key == "attack_success_rate":
+                                value = parsed_metrics.get("prediction_flip_rate")
+                            if isinstance(value, (int, float)):
+                                with metric_cols[idx]:
+                                    st.metric(label, fmt.format(value))
+
+                        with st.expander("展开查看全部指标"):
+                            st.json(parsed_metrics)
+
+                    st.subheader("样本查看")
+                    num_samples = int(metadata.get("num_samples", 0) or 0)
+                    labels = metadata.get("labels", [])
+                    preds = metadata.get("predictions", [])
+
+                    if num_samples <= 0:
+                        st.info("该实验没有可展示的样本。")
+                    else:
+                        if num_samples == 1:
+                            sample_idx = 0
+                            st.caption("样本索引：0（该实验仅有 1 个样本）")
+                        else:
+                            sample_idx = st.slider(
+                                "样本索引",
+                                0,
+                                num_samples - 1,
+                                0,
+                                1,
+                                key=f"history_sample_{selected}",
+                            )
+                        orig_path = os.path.join(exp_path, f"original_{sample_idx}.png")
+                        adv_path = os.path.join(exp_path, f"adversarial_{sample_idx}.png")
+                        pert_path = os.path.join(exp_path, f"perturbation_{sample_idx}.png")
+
+                        cc1, cc2, cc3 = st.columns(3)
+                        with cc1:
+                            if os.path.exists(orig_path):
+                                label_txt = labels[sample_idx] if sample_idx < len(labels) else "?"
+                                st.image(orig_path, caption=f"原图 标签={label_txt}", use_container_width=True)
+                            else:
+                                st.warning("未找到原图文件。")
+                        with cc2:
+                            if os.path.exists(adv_path):
+                                pred_txt = preds[sample_idx] if sample_idx < len(preds) else "?"
+                                st.image(adv_path, caption=f"对抗图 预测={pred_txt}", use_container_width=True)
+                            else:
+                                st.warning("未找到对抗图文件。")
+                        with cc3:
+                            if os.path.exists(orig_path) and os.path.exists(adv_path):
+                                try:
+                                    orig_img_np = np.array(Image.open(orig_path).convert("RGB"), dtype=np.float32) / 255.0
+                                    adv_img_np = np.array(Image.open(adv_path).convert("RGB"), dtype=np.float32) / 255.0
+                                    diff_vis = to_perturbation_vis(np.abs(adv_img_np - orig_img_np))
+                                    st.image(diff_vis, caption="扰动(归一化)", use_container_width=True)
+                                except Exception:
+                                    if os.path.exists(pert_path):
+                                        st.image(pert_path, caption="扰动(归一化)", use_container_width=True)
+                                    else:
+                                        st.warning("未找到扰动图文件。")
+                            elif os.path.exists(pert_path):
+                                st.image(pert_path, caption="扰动(归一化)", use_container_width=True)
+                            else:
+                                st.warning("未找到扰动图文件。")
+
+                    with st.expander("查看原始 metadata.json"):
+                        st.json(metadata)
 
 with tab4:
     st.header("使用说明")

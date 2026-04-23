@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local app/runtime artifacts
+.streamlit/
+
+# Large local datasets and model files
+data/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
