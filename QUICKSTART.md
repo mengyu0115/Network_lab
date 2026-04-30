@@ -27,6 +27,8 @@ python -c "import torchvision; print(torchvision.__version__)"
 
 ## 使用方法
 
+> 当前 Web 入口聚焦图片模态攻击。CIFAR-10/MNIST 批量攻击需要先训练对应微调权重；自定义图片可直接使用 ImageNet 预训练模型演示。
+
 ### 方法1: Web界面 (推荐)
 
 启动Streamlit应用:
@@ -39,12 +41,23 @@ streamlit run web/app.py
 
 **操作步骤**:
 1. 在侧边栏选择模型 (如 resnet50)
-2. 选择数据集 (如 CIFAR-10)
+2. 选择数据集（自定义图片可直接演示；CIFAR-10/MNIST 需先训练微调权重）
 3. 选择攻击方法 (如 PGD)
 4. 调整攻击参数
 5. 上传图像或使用标准数据集
 6. 点击"开始攻击"按钮
 7. 查看结果和评估指标
+
+### 标准数据集模型训练
+
+如果要使用 CIFAR-10 或 MNIST 做可信的批量攻击，先运行：
+
+```bash
+python scripts/train_classifier.py --dataset cifar10 --model resnet18 --epochs 5
+python scripts/train_classifier.py --dataset mnist --model resnet18 --epochs 3
+```
+
+训练脚本会把最优权重保存到 `data/checkpoints/`。保存后重新启动 Web 页面，平台会自动加载对应权重。
 
 ### 方法2: 命令行脚本
 

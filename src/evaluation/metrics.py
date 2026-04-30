@@ -80,7 +80,7 @@ class AttackEvaluator:
 
         # 4. 置信度变化
         confidence_metrics = self._compute_confidence_metrics(
-            orig_outputs, adv_outputs, orig_preds
+            orig_outputs, adv_outputs, true_labels
         )
         metrics.update(confidence_metrics)
 
