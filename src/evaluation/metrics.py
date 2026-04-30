@@ -61,6 +61,8 @@ class AttackEvaluator:
         metrics = {}
 
         # 1. 攻击成功率
+        metrics['original_accuracy'] = (orig_preds == true_labels).float().mean().item() * 100
+        metrics['adversarial_accuracy'] = (adv_preds == true_labels).float().mean().item() * 100
         metrics['attack_success_rate'] = self._compute_attack_success_rate(
             orig_preds, adv_preds, true_labels, targeted, target_labels
         )

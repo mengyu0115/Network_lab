@@ -310,14 +310,20 @@ with tab1:
                     "model_output_dim": output_dim,
                 }
 
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3 = st.columns(3)
                 with c1:
-                    st.metric("预测翻转率", f"{metrics['attack_success_rate']:.2f}%")
+                    st.metric("原始准确率", f"{metrics['original_accuracy']:.2f}%")
                 with c2:
-                    st.metric("L2扰动", f"{metrics['perturbation_l2']:.4f}")
+                    st.metric("攻击后准确率", f"{metrics['adversarial_accuracy']:.2f}%")
                 with c3:
-                    st.metric("Linf扰动", f"{metrics['perturbation_linf']:.4f}")
+                    st.metric("预测翻转率", f"{metrics['attack_success_rate']:.2f}%")
+
+                c4, c5, c6 = st.columns(3)
                 with c4:
+                    st.metric("L2扰动", f"{metrics['perturbation_l2']:.4f}")
+                with c5:
+                    st.metric("Linf扰动", f"{metrics['perturbation_linf']:.4f}")
+                with c6:
                     st.metric("SSIM", f"{metrics['ssim']:.4f}")
 
 with tab2:
@@ -335,14 +341,20 @@ with tab2:
                 " 请把指标理解为预测翻转强度，不要作为标准分类准确率。"
             )
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("预测翻转率", f"{metrics['attack_success_rate']:.2f}%")
+            st.metric("原始准确率", f"{metrics['original_accuracy']:.2f}%")
         with c2:
-            st.metric("L2扰动", f"{metrics['perturbation_l2']:.4f}")
+            st.metric("攻击后准确率", f"{metrics['adversarial_accuracy']:.2f}%")
         with c3:
-            st.metric("Linf扰动", f"{metrics['perturbation_linf']:.4f}")
+            st.metric("预测翻转率", f"{metrics['attack_success_rate']:.2f}%")
+
+        c4, c5, c6 = st.columns(3)
         with c4:
+            st.metric("L2扰动", f"{metrics['perturbation_l2']:.4f}")
+        with c5:
+            st.metric("Linf扰动", f"{metrics['perturbation_linf']:.4f}")
+        with c6:
             st.metric("置信度变化", f"{metrics['confidence_drop']:.4f}")
 
         for i in range(min(3, len(exp["original"]))):
@@ -369,6 +381,8 @@ with tab3:
             if parsed:
                 return parsed
             fallback_keys = [
+                "original_accuracy",
+                "adversarial_accuracy",
                 "attack_success_rate",
                 "prediction_flip_rate",
                 "perturbation_l2",
@@ -478,6 +492,8 @@ with tab3:
                                     "模型": r["model"],
                                     "数据集": r["dataset"],
                                     "样本数": r["metadata"].get("num_samples", "-"),
+                                    "原始准确率(%)": m.get("original_accuracy"),
+                                    "攻击后准确率(%)": m.get("adversarial_accuracy"),
                                     "预测翻转率(%)": m.get("attack_success_rate", m.get("prediction_flip_rate")),
                                     "L2扰动": m.get("perturbation_l2"),
                                     "Linf扰动": m.get("perturbation_linf"),
@@ -511,8 +527,10 @@ with tab3:
                     parsed_metrics = selected_record["metrics"]
                     if parsed_metrics:
                         st.subheader("关键指标")
-                        metric_cols = st.columns(4)
+                        metric_cols = st.columns(3)
                         show_keys = [
+                            ("original_accuracy", "原始准确率", "{:.2f}%"),
+                            ("adversarial_accuracy", "攻击后准确率", "{:.2f}%"),
                             ("attack_success_rate", "预测翻转率", "{:.2f}%"),
                             ("perturbation_l2", "L2扰动", "{:.4f}"),
                             ("perturbation_linf", "Linf扰动", "{:.4f}"),
@@ -523,7 +541,7 @@ with tab3:
                             if value is None and key == "attack_success_rate":
                                 value = parsed_metrics.get("prediction_flip_rate")
                             if isinstance(value, (int, float)):
-                                with metric_cols[idx]:
+                                with metric_cols[idx % len(metric_cols)]:
                                     st.metric(label, fmt.format(value))
 
                         with st.expander("展开查看全部指标"):
@@ -594,6 +612,7 @@ with tab4:
         - 自定义图片默认使用 ImageNet 预训练模型，可直接上传图片演示。
         - CIFAR-10 / MNIST 批量实验需要先运行 `scripts/train_classifier.py` 训练微调权重。
         - 没有微调权重时，平台会停止标准数据集实验，避免把随机分类头结果当成有效攻击结果。
+        - 将 epsilon 设为 0 可以验证模型本身：原始准确率应与攻击后准确率一致，预测翻转率和扰动应为 0。
         """
     )
 
