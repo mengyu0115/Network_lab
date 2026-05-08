@@ -1,0 +1,81 @@
+# 配置文件
+
+# 模型配置
+MODELS:
+  - resnet18
+  - resnet50
+  - resnet101
+  - vgg16
+  - vgg19
+  - densenet121
+  - mobilenet_v2
+  - efficientnet_b0
+
+# 数据集配置
+DATASETS:
+  CIFAR10:
+    num_classes: 10
+    image_size: 32
+    classes:
+      - airplane
+      - automobile
+      - bird
+      - cat
+      - deer
+      - dog
+      - frog
+      - horse
+      - ship
+      - truck
+
+  MNIST:
+    num_classes: 10
+    image_size: 28
+    classes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+  ImageNet:
+    num_classes: 1000
+    image_size: 224
+
+# 攻击配置
+ATTACKS:
+  FGSM:
+    epsilon: 0.03
+    targeted: false
+
+  PGD:
+    epsilon: 0.03
+    alpha: 0.01
+    num_iter: 10
+    random_start: true
+    targeted: false
+
+  CW:
+    c: 1.0
+    kappa: 0
+    learning_rate: 0.01
+    num_iter: 100
+    targeted: false
+
+# 评估配置
+EVALUATION:
+  metrics:
+    - attack_success_rate
+    - perturbation_l2
+    - perturbation_linf
+    - ssim
+    - psnr
+    - confidence_drop
+
+# 可视化配置
+VISUALIZATION:
+  figsize: [12, 8]
+  dpi: 150
+  style: seaborn-v0_8-darkgrid
+
+# 系统配置
+SYSTEM:
+  device: cuda  # cuda or cpu
+  batch_size: 32
+  num_workers: 2
+  seed: 42
