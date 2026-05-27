@@ -9,6 +9,10 @@ env/
 
 # Local app/runtime artifacts
 .streamlit/
+.env
+*.env
+*.key
+secrets.*
 
 # Large local datasets and model files
 data/
@@ -18,3 +22,16 @@ data/
 Thumbs.db
 .vscode/
 .idea/
+
+# Temporary chat/exported screenshots
+image-*.png
+
+# Local course/process materials
+ask.txt
+FIXES.md
+material-checklist.md
+project-documentation-outline.md
+self-check-report.md
+项目指导书.pdf
+测试猫图.png
+PyTorch_CIFAR10-master/

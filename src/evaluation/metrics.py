@@ -48,6 +48,8 @@ class AttackEvaluator:
         original_images = original_images.to(self.device)
         adversarial_images = adversarial_images.to(self.device)
         true_labels = true_labels.to(self.device)
+        if target_labels is not None:
+            target_labels = target_labels.to(self.device)
 
         with torch.no_grad():
             # 原始预测

@@ -3,74 +3,128 @@
 ## 环境要求
 
 - Python 3.10+
-- Windows / Linux / macOS
-- CUDA 可选，但建议用于加速实验
+- 推荐使用 Anaconda 环境
+- CUDA 可选；有 CUDA 时生成对抗样本更快
+- 阿里云百炼 API Key，用于 Qwen-VL 黑盒评估
 
-## 1. 安装 PyTorch
+## 1. 安装依赖
 
-### CPU 版本
+如果已有课程项目环境：
 
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-```
-
-### CUDA 版本
-
-请根据你的本机 CUDA 版本安装对应的 PyTorch 版本，例如：
-
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
-## 2. 安装项目依赖
-
-```bash
+```cmd
+conda activate multimodal-attack
 pip install -r requirements.txt
 ```
 
-## 3. 验证环境
+如果需要新建环境：
 
-```bash
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+```cmd
+conda create -n multimodal-attack python=3.10 -y
+conda activate multimodal-attack
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
 ```
 
-## 4. 启动 Web 平台
+没有 CUDA 时可安装 CPU 版：
 
-```bash
+```cmd
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+```
+
+## 2. 配置 Qwen-VL API
+
+华北2（北京）地域：
+
+```cmd
+set DASHSCOPE_API_KEY=你的百炼APIKey
+set DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+新加坡地域：
+
+```cmd
+set DASHSCOPE_API_KEY=你的百炼APIKey
+set DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+```
+
+美国（弗吉尼亚）地域：
+
+```cmd
+set DASHSCOPE_API_KEY=你的百炼APIKey
+set DASHSCOPE_BASE_URL=https://dashscope-us.aliyuncs.com/compatible-mode/v1
+```
+
+API Key 不要写入代码，不要提交到 GitHub。
+
+如果 Key 曾经发到聊天、截图或公开仓库，建议在阿里云控制台重新生成 Key，并删除旧 Key。
+
+## 3. 启动 Web 平台
+
+```cmd
+cd "D:\desk\作业\大三下\未来互联网新技术\Network_lab"
+conda activate multimodal-attack
 streamlit run web/app.py
 ```
 
-## 5. 首次运行说明
+浏览器访问：
 
-当前默认主流程直接面向 `CLIP / BLIP` 多模态目标，不依赖 `CIFAR-10 / MNIST` 分类权重。
-
-首次点击对应评测或攻击入口时，`transformers` 会自动下载所需模型到本地缓存。
-
-样本上传、标注、版本快照和 CSV/JSON 导出不需要额外依赖。
-
-## 6. 可选的分类基线
-
-如果你仍然需要运行旧的分类基线实验，可额外训练对应权重：
-
-```bash
-python scripts/train_classifier.py --dataset cifar10 --model resnet18 --epochs 5
-python scripts/train_classifier.py --dataset mnist --model resnet18 --epochs 3
+```text
+http://localhost:8501
 ```
 
-## 7. 常见问题
+## 4. 验证环境
 
-### Q1：程序提示首次加载模型较慢
+```cmd
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+python test_imports.py
+```
 
-说明当前正在下载或读取 `CLIP / BLIP` 本地缓存，属于正常现象。
+## 5. 缓存和费用控制
 
-### Q2：程序只能检测到 CPU
+黑盒评估默认使用本地缓存：
 
-说明当前 Python 环境安装的是 CPU 版 PyTorch，或 CUDA 环境未正确配置。
+```text
+data/blackbox_cache/
+```
 
-### Q3：旧分类基线提示没有匹配权重
+同一张图片、同一模型、同一提示词不会重复调用 API。若要强制重新请求，可修改提示词末尾，例如加 `版本2`。
 
-说明你进入的是附录性质的分类实验路径，但还没有训练对应权重。请先执行上面的训练脚本。
+推荐低成本模型：
 
-### Q4：为什么“攻击成功”不是只看描述是否变化
+```text
+qwen-vl-plus-latest
+```
 
-当前平台已经为 CLIP / BLIP 固化了统一判定规则。结果页会同时展示阈值判定、关键指标和原因说明。
+OCR/表格场景优先：
+
+```text
+qwen-vl-ocr
+```
+
+少量高质量补充：
+
+```text
+qwen-vl-max-latest
+```
+
+## 6. 常见问题
+
+### 自定义图片下分类准确率为什么是 0？
+
+自定义截图不是 ImageNet 分类任务，ResNet 的分类准确率没有实验意义。该页只用于生成扰动图。最终结论看 `Qwen-VL 黑盒评估` 页的字段准确率和真实答案攻击成功。
+
+### epsilon=0 时应该怎样？
+
+`epsilon=0` 是对照组。应看到：
+
+```text
+L2=0
+Linf=0
+SSIM=1
+真实答案攻击成功=否
+```
+
+### 原图也识别错怎么办？
+
+该样本不能算严格攻击成功，只能作为“原图识别困难样本”。严格成功样本要求原图字段准确率至少 80%。
